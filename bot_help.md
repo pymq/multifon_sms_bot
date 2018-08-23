@@ -8,4 +8,5 @@ profile name number password   # ввести параметры профиля 
 select profile                 # выбрать профиль profile
 remove profile                 # удалить профиль с именем profile
 captcha key                    # ввести капчу key для текущего профиля
+captcha                        # получить капчу для текущего профиля
 ```

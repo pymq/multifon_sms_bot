@@ -1,3 +1,4 @@
+import json
 import random
 from io import BytesIO
 
@@ -13,7 +14,7 @@ from seleniumrequests import Chrome
 
 class UmsConnection():
 
-    def __init__(self, user_phone, user_password):
+    def __init__(self, user_phone, user_password, cookies=None):
         self._user_phone = user_phone
         self._user_password = user_password
         self._is_authorized = False
@@ -23,15 +24,21 @@ class UmsConnection():
         WINDOW_SIZE = "1620,880"  # ?
         options.add_argument("--window-size=%s" % WINDOW_SIZE)
         self.webdriver = Chrome(chrome_options=options)
-        self.webdriver.get(r"https://messages.megafon.ru/onebox/mix.do")
+        if cookies:
+            self.webdriver.get('https://messages.megafon.ru/onebox/mix.do')
+            for cookie in cookies:
+                self.webdriver.add_cookie(cookie)
+            self.webdriver.get('https://messages.megafon.ru/onebox/mix.do')
+            self._is_authorized = self.try_is_authorized()
 
-        phone_input = self.webdriver.find_element_by_id('user12')
-        phone_input.send_keys(user_phone)
-
-        password_input_secinfo = self.webdriver.find_element_by_id('secinfo')
-        password_input_secinfo.click()
-        password_input = self.webdriver.find_element_by_id("secinfo2")
-        password_input.send_keys(user_password)
+        if not self.is_authorized:
+            self.webdriver.get(r"https://messages.megafon.ru/onebox/mix.do")
+            phone_input = self.webdriver.find_element_by_id('user12')
+            phone_input.send_keys(user_phone)
+            password_input_secinfo = self.webdriver.find_element_by_id('secinfo')
+            password_input_secinfo.click()
+            password_input = self.webdriver.find_element_by_id("secinfo2")
+            password_input.send_keys(user_password)
 
     def get_captcha(self) -> bytes:
         captcha = self.webdriver.find_element_by_id('imageC')
@@ -62,6 +69,21 @@ class UmsConnection():
             return True
         except exceptions.TimeoutException:
             return False
+
+    def try_is_authorized(self) -> bool:
+        # TODO
+        url = r"https://messages.megafon.ru/onebox/getChatList.do"
+        get_chats_url_params = {
+            'startNum': '1',
+            'endNum': 10,
+            'reFreshFlag': '1',
+            'operation': '1',
+            'chatMsgType': '10100000000110000000000000000000',
+            't': random.random()
+        }
+        response = self.webdriver.request('GET', url, params=get_chats_url_params)
+        return response.status_code == 200
+
 
     @property
     def is_authorized(self):
@@ -107,3 +129,7 @@ class UmsConnection():
 
     def close(self):
         self.webdriver.close()
+
+    def get_cookies_json(self):
+        cookies = self.webdriver.get_cookies()
+        return json.dumps(cookies)

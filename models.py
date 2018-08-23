@@ -16,6 +16,7 @@ class Profile(BaseModel):
     owner = ForeignKeyField(User, backref='profiles')
     name = CharField()
     # proxy = CharField()
+    cookies_json = TextField(null=True)
     phone_number = CharField(max_length=10)
     password = CharField()
 

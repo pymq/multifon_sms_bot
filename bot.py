@@ -1,5 +1,6 @@
 import configparser
 import datetime
+import json
 from functools import partial
 
 from bs4 import BeautifulSoup
@@ -7,8 +8,8 @@ from matrix_bot_api.matrix_bot_api import MatrixBotAPI
 from matrix_bot_api.mregex_handler import MRegexHandler
 from mistune import markdown
 
-from models import User, Profile, CurrentProfile
 from api_selenium import UmsConnection
+from models import User, Profile, CurrentProfile
 from utils import have_access, send_exception
 
 config = configparser.ConfigParser()
@@ -19,6 +20,7 @@ server_url = config.get('Bot', 'server_url')
 
 BOT = MatrixBotAPI(bot_username, bot_password, server_url)
 
+# [(Profile, UmsConnection), ]
 CONNECTIONS = []
 
 with open('whitelist_users.txt') as f:
@@ -62,16 +64,23 @@ def list_chats_callback(room, event):
     room.send_html(markdown(answer))
 
 
-send_exception(private_access(list_chats_callback))
-
-
 def get_current_connection(username):
     user = User.get_or_create(username=username)[0]
     current_profile = CurrentProfile.get_or_none(user=user)
     if current_profile:
         connection = next(
-            (x[1] for x in CONNECTIONS if x[0].owner == user and x[0].name == current_profile.profile.name), None)
+            (tuple[1] for tuple in CONNECTIONS if tuple[0].owner == user and tuple[0].name == current_profile.profile.name), None)
         return connection
+    else:
+        return None
+
+def get_current_profile(username):
+    user = User.get_or_create(username=username)[0]
+    current_profile = CurrentProfile.get_or_none(user=user)
+    if current_profile:
+        profile = next(
+            (tuple[0] for tuple in CONNECTIONS if tuple[0].owner == user and tuple[0].name == current_profile.profile.name), None)
+        return profile
     else:
         return None
 
@@ -87,7 +96,7 @@ def print_chat_callback(room, event):
 
     args = event['content']['body'].split()
     if len(args) < 2:
-        room.send_text('Введите имя диалога')
+        room.send_text('Не указано имя диалога')
         return
     adress = args[1]
     number = args[2] if len(args) >= 3 else 10
@@ -138,18 +147,33 @@ def add_or_update_profile_callback(room, event):
 def enter_captcha_callback(room, event):
     username = event['sender']
     connection = get_current_connection(username)
-    # TODO возможна ситуация, когда профиль есть, а connection отсутствует
     if connection and connection.is_authorized:
         room.send_text('Не предоставлены данные профиля, либо ввод капчи не требуется')
         return
     key = event['content']['body'].split()[1]
     if connection.send_captcha_key(key):
         room.send_text('Капча подошла, замечательно!')
+        user = User.get_or_create(username=username)[0]
+        current_profile = CurrentProfile.get_or_none(user=user)
+        current_profile.profile.cookies_json = connection.get_cookies_json()
+        current_profile.profile.save()
     else:
         room.send_text('Увы, попробуйте ещё раз')
         captcha = connection.get_captcha()
         url = BOT.client.upload(captcha, 'image/png')
         room.send_image(url, 'captcha.png')
+
+@private_access
+@send_exception
+def get_captcha_callback(room, event):
+    username = event['sender']
+    connection = get_current_connection(username)
+    if connection and connection.is_authorized:
+        room.send_text('Не предоставлены данные профиля, либо ввод капчи не требуется')
+        return
+    captcha = connection.get_captcha()
+    url = BOT.client.upload(captcha, 'image/png')
+    room.send_image(url, 'captcha.png')
 
 
 @private_access
@@ -221,7 +245,11 @@ def remove_profile_callback(room, event):
 
 
 def main():
-    # TODO ? установление соединений со всеми профилями при запуске
+    profiles = Profile.select()
+    for profile in profiles:
+        cookies = json.loads(profile.cookies_json) if profile.cookies_json else None
+        conn = UmsConnection(profile.phone_number, profile.password, cookies)
+        CONNECTIONS.append((profile, conn))
 
     hi_handler = MRegexHandler("hi", hi_callback)
     BOT.add_handler(hi_handler)
@@ -252,6 +280,9 @@ def main():
 
     enter_captcha_handler = MRegexHandler("^captcha \w+$", enter_captcha_callback)
     BOT.add_handler(enter_captcha_handler)
+
+    get_captcha_handler = MRegexHandler("^captcha$", get_captcha_callback)
+    BOT.add_handler(get_captcha_handler)
 
     BOT.start_polling()
 
